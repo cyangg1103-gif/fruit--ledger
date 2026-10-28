@@ -93,3 +93,6 @@ a{color:var(--green)}
 .welcome img{width:112px;height:112px;border-radius:26px;box-shadow:0 8px 24px rgba(28,43,34,.14)}
 .welcome .btns{width:100%;max-width:340px;display:flex;flex-direction:column;gap:12px}
 .cardhead{display:flex;justify-content:space-between;align-items:center;gap:8px}
+
+textarea.in.paste{min-height:150px;border:1px solid var(--field-line);border-radius:12px;padding:10px 12px;font:13px/1.5 ui-monospace,Menlo,monospace;background:var(--field);color:var(--ink);width:100%;resize:vertical}
+.btn.pastebtn{display:flex;align-items:center;justify-content:center;gap:8px}
