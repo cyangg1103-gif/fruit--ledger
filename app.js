@@ -1,6 +1,6 @@
 (function(){
 'use strict';
-const VERSION='1.0';
+const VERSION='1.1';
 const ICON='icon-192.png';
 const $app=document.getElementById('app');
 const $tabs=document.getElementById('tabs');
@@ -93,9 +93,8 @@ async function b64ToBlob(b64,type){const r=await fetch('data:'+(type||'image/jpe
 // ---------- AI (Google Gemini, called straight from this phone) ----------
 const API='https://generativelanguage.googleapis.com/v1beta/models/';
 function aiErr(code,detail){const e=new Error(code);e.code=code;e.detail=detail||'';return e;}
-async function callGemini(body){
+async function callGemini(body,model){
   const key=(S.settings.apiKey||'').trim();if(!key)throw aiErr('no_key');
-  const model=(S.settings.model||DEFAULTS.model).trim();
   let r;
   try{r=await fetch(API+encodeURIComponent(model)+':generateContent',{method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':key},body:JSON.stringify(body)});}
   catch(e){throw aiErr('offline');}
@@ -109,13 +108,50 @@ async function callGemini(body){
   if(r.status>=500)throw aiErr('busy',msg);
   throw aiErr('http_'+r.status,msg);
 }
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+function aiProgress(t){const el=document.getElementById('aiStatus');if(el)el.textContent=t;}
+let backupModels=null; // other Flash models this key can use, found once per session
+async function findBackupModels(main){
+  if(backupModels)return backupModels;
+  try{
+    const r=await fetch(API.replace(/\/$/,'')+'?pageSize=200',{headers:{'x-goog-api-key':S.settings.apiKey.trim()}});
+    const j=await r.json();
+    const ver=n=>{const m=n.match(/(\d+(?:\.\d+)?)/);return m?parseFloat(m[1]):0;};
+    backupModels=(j.models||[])
+      .filter(m=>(m.supportedGenerationMethods||[]).includes('generateContent'))
+      .map(m=>String(m.name||'').replace(/^models\//,''))
+      .filter(n=>/^gemini-[\d.]+-flash/.test(n)&&!/tts|image|audio|live|cyber|computer|embed|exp|thinking|preview-\d\d-\d\d/.test(n)&&n!==main)
+      .sort((a,b)=>ver(b)-ver(a)||(a.includes('lite')?1:0)-(b.includes('lite')?1:0)||a.length-b.length)
+      .slice(0,3);
+  }catch(e){backupModels=[];}
+  return backupModels;
+}
+async function callOnce(body,model){
+  try{return await callGemini(body,model);}
+  catch(e){if(e.code==='bad_thinking'&&body.generationConfig.thinkingConfig){delete body.generationConfig.thinkingConfig;return await callGemini(body,model);}throw e;}
+}
+async function callWithRetry(body){
+  const main=(S.settings.model||DEFAULTS.model).trim();
+  let last;
+  // 1) main model, up to 3 tries with short waits
+  for(const wait of [0,3000,8000]){
+    if(wait){aiProgress('Google 的 AI 有点忙，'+(wait/1000)+' 秒后自动再试…');await sleep(wait);}
+    try{return await callOnce(JSON.parse(JSON.stringify(body)),main);}
+    catch(e){last=e;if(!['busy','rate_limited','bad_model'].includes(e.code))throw e;if(e.code==='bad_model')break;}
+  }
+  // 2) another Flash model
+  for(const m of await findBackupModels(main)){
+    aiProgress('换另一个 AI 型号（'+m+'）来读…');
+    try{const j=await callOnce(JSON.parse(JSON.stringify(body)),m);return j;}
+    catch(e){last=e;if(!['busy','rate_limited','bad_model'].includes(e.code))throw e;}
+  }
+  throw last;
+}
 async function aiJson(prompt,blob){
   const b64=await blobToB64(blob);
   const body={contents:[{role:'user',parts:[{inline_data:{mime_type:blob.type||'image/jpeg',data:b64}},{text:prompt}]}],
     generationConfig:{responseMimeType:'application/json',temperature:0.2,thinkingConfig:{thinkingLevel:'low'}}};
-  let j;
-  try{j=await callGemini(body);}
-  catch(e){if(e.code==='bad_thinking'){delete body.generationConfig.thinkingConfig;j=await callGemini(body);}else throw e;}
+  const j=await callWithRetry(body);
   const cand=j.candidates&&j.candidates[0];
   if(!cand){throw aiErr(j.promptFeedback&&j.promptFeedback.blockReason?'blocked':'empty');}
   const text=((cand.content&&cand.content.parts)||[]).filter(p=>!p.thought&&p.text).map(p=>p.text).join('').trim();
@@ -139,7 +175,7 @@ function errText(e){
   if(c==='bad_key')return 'AI 钥匙用不了。请到「设置」重新贴上钥匙，现在可以先手动输入。';
   if(c==='bad_model')return '设置里的 AI 型号名称不对，请到「设置」检查。';
   if(c==='rate_limited')return 'AI 免费额度暂时用完或太频繁，请过一两分钟再试，或手动输入。';
-  if(c==='busy')return 'Google 的 AI 现在太忙，请过一分钟再试。';
+  if(c==='busy')return 'Google 的 AI 现在太忙，已经自动试了几次和换了型号都不行。请过几分钟再拍一次，或先手动输入。';
   if(c==='offline')return '连不上网络，请检查后再试，或手动输入。';
   if(c==='invalid_json'||c==='empty')return 'AI 没读懂这张照片，请拍清楚一点再试，或手动输入。';
   if(c==='blocked')return 'AI 拒绝读这张照片，请换一张再试。';
@@ -306,7 +342,7 @@ async function editInvoice(iv,from){
 function invTotal(){return r2(draft.items.reduce((a,x)=>a+num(x.subtotal),0));}
 function vInvoice(){
   const d=draft;
-  if(d.loading){$app.innerHTML=`<div class="wrap">${back('读单中')}<div style="display:flex;gap:14px;align-items:center">${d.photoUrl?`<img class="thumb" src="${d.photoUrl}" alt="进货单照片">`:''}<div><span class="spin"></span>AI 正在读这张单，大约 10–30 秒…</div></div><button type="button" class="btn" data-act="manual">不等了，手动输入</button></div>`;return;}
+  if(d.loading){$app.innerHTML=`<div class="wrap">${back('读单中')}<div style="display:flex;gap:14px;align-items:center">${d.photoUrl?`<img class="thumb" src="${d.photoUrl}" alt="进货单照片">`:''}<div><span class="spin"></span><span id="aiStatus">AI 正在读这张单，大约 10–30 秒…</span></div></div><button type="button" class="btn" data-act="manual">不等了，手动输入</button></div>`;return;}
   const tot=invTotal();
   const mismatch=d.readTotal!=null&&Math.abs(d.readTotal-tot)>0.009;
   $app.innerHTML=`<div class="wrap">${back(d.isNew?'请确认这张单':'修改进货单')}
@@ -396,7 +432,7 @@ function vNight(){
   $app.innerHTML=`<div class="wrap">${back(d.date===ymd()?'今晚结算':niceDate(d.date)+' 结算')}
   <label class="f" for="rev">收入（S$，还不知道可以先空着）<input class="in lg num" id="rev" inputmode="decimal" placeholder="例如 3308.70" value="${esc(d.revenue)}"></label>
   <div class="row" style="align-items:center"><h2>剩货</h2><button type="button" class="btn small" data-act="readLeft">${d.photoUrl?'重拍剩货单':'拍手写剩货单'}</button></div>
-  ${d.loading?'<div><span class="spin"></span>AI 正在读你的手写单…</div>':''}
+  ${d.loading?'<div><span class="spin"></span><span id="aiStatus">AI 正在读你的手写单…</span></div>':''}
   ${d.error?`<div class="warn">${esc(d.error)}</div>`:''}
   ${d.rows.length?`<div class="tbl ngt" id="rows"><div class="tr h"><span>水果</span><span>早上有</span><span>卖出</span><span class="r">今晚剩</span></div>
   ${d.rows.map((r,i)=>{const sold=r.opening!=null&&r.left!==''?r2(r.opening-num(r.left)):null;return `<div class="tr${r.unsure?' flag':''}" data-i="${i}">
