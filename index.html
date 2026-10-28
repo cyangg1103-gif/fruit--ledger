@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>水果账本</title>
+<meta name="theme-color" content="#2E6B45">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="水果账本">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" href="icon-192.png">
+<link rel="stylesheet" href="style.css?v=1">
+</head>
+<body>
+<div id="app"><div class="wrap"><div class="empty"><span class="spin"></span>正在打开账本…</div></div></div>
+<nav class="tabs" id="tabs" hidden><div class="in">
+  <button type="button" data-tab="home">今天</button>
+  <button type="button" data-tab="records">记录</button>
+  <button type="button" data-tab="suggest">建议</button>
+  <button type="button" data-tab="settings">设置</button>
+</div></nav>
+<div class="toast" id="toast" hidden></div>
+<input type="file" id="filePick" accept="image/*" hidden>
+<input type="file" id="jsonPick" accept=".json,application/json" hidden>
+<script src="app.js?v=1"></script>
+</body>
+</html>
