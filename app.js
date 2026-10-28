@@ -724,7 +724,7 @@ document.addEventListener('click',async e=>{
     $app.innerHTML='<div class="wrap"><div class="empty">这个浏览器存不了资料。请用 iPhone 的 Safari 打开，并且不要用「无痕浏览」。</div></div>';return;
   }
   try{if(navigator.storage&&navigator.storage.persist)navigator.storage.persist();}catch(e){}
-  if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js').catch(()=>{});}
+  if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js',{updateViaCache:'none'}).then(r=>{try{r.update();}catch(e){}}).catch(()=>{});}
   decideStart();
 })();
 })();
