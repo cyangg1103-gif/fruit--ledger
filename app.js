@@ -9,8 +9,6 @@ const $json=document.getElementById('jsonPick');
 const S={settings:{},invoices:[],nights:[],units:{}};
 let view={name:'boot'};
 let draft=null;          // invoice / night being edited
-let pasteQueue=[];       // more sheets from one Claude paste, opened one by one
-let pasteText='',pasteErr='';
 let readyBackup=null;    // prepared backup file waiting to be saved
 let IDB=null;
 
@@ -176,8 +174,8 @@ function errText(e){
   if(c==='no_key')return '还没有设定 AI 钥匙。请到「设置」填好 Gemini 钥匙，现在可以先在下面手动输入。';
   if(c==='bad_key')return 'AI 钥匙用不了。请到「设置」重新贴上钥匙，现在可以先手动输入。';
   if(c==='bad_model')return '设置里的 AI 型号名称不对，请到「设置」检查。';
-  if(c==='rate_limited')return 'AI 免费额度暂时用完或太频繁，请过一两分钟再试，或手动输入。';
-  if(c==='busy')return 'Google 的 AI 现在太忙，已经自动试了几次和换了型号都不行。请过几分钟再拍一次，或先手动输入。';
+  if(c==='rate_limited')return 'AI 免费额度暂时用完或太频繁，请过一两分钟再试。也可以把照片发给 Claude，再按「贴上 Claude 读好的单」。';
+  if(c==='busy')return 'Google 的 AI 现在太忙，已经自动试了几次和换了型号都不行。请过几分钟再拍一次。也可以把照片发给 Claude，再按首页的「贴上 Claude 读好的单」。';
   if(c==='offline')return '连不上网络，请检查后再试，或手动输入。';
   if(c==='invalid_json'||c==='empty')return 'AI 没读懂这张照片，请拍清楚一点再试，或手动输入。';
   if(c==='blocked')return 'AI 拒绝读这张照片，请换一张再试。';
@@ -221,7 +219,7 @@ function setTabs(active){
   $tabs.querySelectorAll('button').forEach(b=>{if(b.dataset.tab===active)b.setAttribute('aria-current','page');else b.removeAttribute('aria-current');});
 }
 function render(){
-  const fn={welcome:vWelcome,setpin:vSetPin,login:vLogin,home:vHome,records:vRecords,day:vDay,suggest:vSuggest,settings:vSettings,invoice:vInvoice,night:vNight,paste:vPaste}[view.name];
+  const fn={welcome:vWelcome,paste:vPaste,setpin:vSetPin,login:vLogin,home:vHome,records:vRecords,day:vDay,suggest:vSuggest,settings:vSettings,invoice:vInvoice,night:vNight}[view.name];
   if(fn)fn();
   setTabs(view.name==='day'?'records':view.name);
 }
@@ -303,8 +301,7 @@ function vHome(){
     <button type="button" class="btn primary bigbtn" data-act="newInvoice"><svg aria-hidden="true" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>${isToday?'拍进货单':'补拍这天的单'}</button>
     <button type="button" class="btn bigbtn" data-act="night" data-date="${t}"><svg aria-hidden="true" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z"/></svg>${s.n?(isToday?'改今晚结算':'改这天结算'):(isToday?'晚上报剩货':'结算这天')}</button>
   </div>
-  <button type="button" class="btn pastebtn" data-act="paste"><svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="12" height="17" rx="2"/><path d="M9 4.5V3h6v1.5M9 10h6M9 14h6M9 18h3"/></svg>贴上 Claude 读好的单</button>
-  <button type="button" class="btn small" data-act="manualInvoice" style="align-self:flex-start">没有照片，手动输入一张单</button>
+  <div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="btn small" data-act="openPaste">贴上 Claude 读好的单</button><button type="button" class="btn small" data-act="manualInvoice">手动输入一张单</button></div>
   <div class="list"><h2>${D}的进货单</h2>
   ${ivs.length?ivs.map(invItem).join(''):`<div class="empty">${D}没有进货单。${isToday?'按上面「拍进货单」拍第一张。':''}</div>`}
   </div>
@@ -400,16 +397,17 @@ async function saveInvoice(btn){
     const doc={date:d.date,supplier:String(d.supplier).trim(),invoiceNo:String(d.invoiceNo).trim(),items:d.items.map(it=>({name:String(it.name).trim(),qty:num(it.qty),unit:String(it.unit).trim(),price:num(it.price),subtotal:r2(num(it.subtotal))})),total:invTotal(),photoId,createdAt:d.createdAt||new Date().toISOString(),updatedAt:new Date().toISOString()};
     await putDoc('invoices',d.id,doc);
     if(doc.supplier){for(const it of doc.items){if(it.name&&it.unit){const k=doc.supplier+'|'+it.name;if(S.units[k]!==it.unit){await put('units',hashId(k),{supplier:doc.supplier,name:it.name,unit:it.unit});S.units[k]=it.unit;}}}}
-    const to=view.from||'home';toast('已保存');draft=null;if(pasteQueue.length){nextPaste();return;}go({name:to,date:doc.date});
+    const to=view.from||'home';toast('已保存');draft=null;go({name:to,date:doc.date});
   }catch(e){console.warn(e);btn.disabled=false;btn.textContent='确认，保存';toast('保存失败：手机空间可能不够，请再试一次');}
 }
 
 // ---------- screens: night ----------
-async function startNight(date,from){
+async function startNight(date,from,pre){
   const n=nightOn(date),open=openingFor(date);
   const rows=Array.from(open.values()).map(o=>({name:o.name,unit:o.unit,opening:r2(o.qty),left:'',unsure:false,question:''}));
   if(n){(n.rows||[]).forEach(r=>{const x=rows.find(y=>keyOf(y.name,y.unit)===keyOf(r.name,r.unit));if(x)x.left=r.left;else rows.push({name:r.name,unit:r.unit,opening:null,left:r.left,unsure:false,question:''});});}
-  draft={date,revenue:n&&n.revenue!=null?String(n.revenue):'',rows,photoId:n?n.photoId||'':'',photoBlob:null,photoUrl:await photoUrl(n&&n.photoId),loading:false,error:''};
+  if(pre)applyPre(rows,pre);
+  draft={date,revenue:pre&&pre.revenue!=null&&pre.revenue!==''?String(pre.revenue):(n&&n.revenue!=null?String(n.revenue):''),rows,photoId:n?n.photoId||'':'',photoBlob:null,photoUrl:await photoUrl(n&&n.photoId),loading:false,error:''};
   go({name:'night',from});
 }
 async function readLeftover(){
@@ -420,26 +418,14 @@ async function readLeftover(){
   try{
     const open=new Map(mine.rows.filter(r=>r.opening!=null).map(r=>[keyOf(r.name,r.unit),{name:r.name,unit:r.unit,qty:r.opening}]));
     const res=await aiLeftover(blob,open);
-    applyLeftover(mine,res.items);
+    (Array.isArray(res.items)?res.items:[]).forEach(it=>{
+      const name=String(it.name||'').trim(),unit=String(it.unit||'').trim();if(!name)return;
+      let x=mine.rows.find(r=>keyOf(r.name,r.unit)===keyOf(name,unit))||mine.rows.find(r=>r.name===name);
+      if(x){x.left=num(it.qty);if(x.unit!==unit&&unit){x.unsure=true;x.question=it.question||('手写的单位是「'+unit+'」，店里是按「'+x.unit+'」，请改成同一个单位的数量');}else if(it.unsure){x.unsure=true;x.question=String(it.question||'');}}
+      else mine.rows.push({name,unit,opening:null,left:num(it.qty),unsure:!!it.unsure,question:String(it.question||'今天没有这样水果的进货记录，请确认')});
+    });
   }catch(e){mine.error=errText(e);}
   mine.loading=false;if(view.name==='night'&&draft===mine)render();
-}
-const baseName=s=>String(s||'').replace(/[（(][^）)]*[）)]/g,'').replace(/\s+/g,'').trim();
-function findRow(rows,name,unit){
-  let x=rows.find(r=>keyOf(r.name,r.unit)===keyOf(name,unit))||rows.find(r=>r.name===name);if(x)return x;
-  const b=baseName(name);if(!b)return null;
-  let c=rows.filter(r=>baseName(r.name)===b);if(c.length===1)return c[0];
-  c=rows.filter(r=>{const rb=baseName(r.name);return rb&&(rb.includes(b)||b.includes(rb));});
-  if(unit&&c.length>1){const cu=c.filter(r=>r.unit===unit);if(cu.length)c=cu;}
-  return c.length===1?c[0]:null;
-}
-function applyLeftover(d,items){
-  (Array.isArray(items)?items:[]).forEach(it=>{
-    const name=String(it.name||'').trim(),unit=String(it.unit||'').trim();if(!name)return;
-    const x=findRow(d.rows,name,unit);
-    if(x){x.left=num(it.qty);if(x.unit!==unit&&unit){x.unsure=true;x.question=it.question||('单上的单位是「'+unit+'」，店里是按「'+x.unit+'」，请改成同一个单位的数量');}else if(it.unsure){x.unsure=true;x.question=String(it.question||'');}}
-    else d.rows.push({name,unit,opening:null,left:num(it.qty),unsure:true,question:String(it.question||'找不到「'+name+'」的进货记录，请确认名称')});
-  });
 }
 function nightCalc(){const d=draft,pur=purchaseOn(d.date),fee=num(S.settings.fixedFee),rev=num(d.revenue);return {pur,fee,rev,profit:r2(rev-pur-fee)};}
 function vNight(){
@@ -481,63 +467,8 @@ async function saveNight(btn){
     const rows=d.rows.map(r=>({name:r.name,unit:r.unit,opening:r.opening,left:num(r.left),sold:r.opening!=null?r2(r.opening-num(r.left)):null}));
     await putDoc('nights','d'+d.date.replace(/-/g,''),{date:d.date,revenue:noRev?null:c.rev,purchase:c.pur,fee:c.fee,profit:noRev?null:c.profit,rows,photoId:photoId||'',savedAt:new Date().toISOString()});
     toast(noRev?'剩货已保存，收入之后再补':'已保存：'+(c.profit>=0?'盈利 ':'亏损 ')+money(Math.abs(c.profit)));
-    const to=view.from||'home';draft=null;if(pasteQueue.length){nextPaste();return;}go({name:to,date:d.date});
+    const to=view.from||'home';draft=null;go({name:to,date:d.date});
   }catch(e){console.warn(e);btn.disabled=false;btn.textContent='确认，保存';toast('保存失败，请再按一次');}
-}
-
-// ---------- screens: paste from Claude ----------
-function vPaste(){
-  $app.innerHTML=`<div class="wrap">${back('贴上 Claude 读好的单')}
-  <p class="sub" style="line-height:1.7;margin:0">在 Claude 那边，按资料框右上角的「复制」，再回到这里按下面的绿色按钮。进货单、剩货单都可以，一次几张也行。</p>
-  <button type="button" class="btn primary" data-act="pasteClip">从剪贴板贴上</button>
-  <label class="f" for="pasteBox">如果上面的按钮没反应，在这个框里长按 → 贴上
-  <textarea class="in paste" id="pasteBox" placeholder="Claude 给你的资料会出现在这里">${esc(pasteText)}</textarea></label>
-  ${pasteErr?`<div class="warn">${esc(pasteErr)}</div>`:''}
-  <button type="button" class="btn" data-act="pasteGo">读取框里的资料</button>
-  </div>`;
-  document.getElementById('pasteBox').addEventListener('input',e=>{pasteText=e.target.value;});
-}
-function parseClaude(text){
-  let t=String(text||'').replace(/[“”]/g,'"');
-  const i=t.search(/[\[{]/),j=Math.max(t.lastIndexOf('}'),t.lastIndexOf(']'));
-  if(i<0||j<i)return null;
-  let data;try{data=JSON.parse(t.slice(i,j+1));}catch(e){return null;}
-  const list=(Array.isArray(data)?data:(Array.isArray(data.sheets)?data.sheets:[data])).filter(x=>x&&typeof x==='object');
-  const kind=x=>{const k=String(x.type||'');if(/进货|invoice/i.test(k))return 'inv';if(/剩货|leftover|night/i.test(k))return 'left';return x.supplier!=null||x.invoiceNo!=null?'inv':'left';};
-  const out=list.map(x=>Object.assign({},x,{kind:kind(x)})).filter(x=>Array.isArray(x.items)||x.revenue!=null);
-  return out.length?out:null;
-}
-async function usePaste(text){
-  const list=parseClaude(text);
-  if(!list){pasteText=text||pasteText;pasteErr='读不懂这段资料。请在 Claude 那边按「复制」把整个资料框复制过来，再试一次。';render();return;}
-  pasteText='';pasteErr='';
-  // invoices first, then leftovers (so the night opening includes the new invoices)
-  pasteQueue=list.filter(x=>x.kind==='inv').concat(list.filter(x=>x.kind==='left'));
-  if(pasteQueue.length>1)toast('一共 '+pasteQueue.length+' 张，一张一张确认');
-  nextPaste();
-}
-async function nextPaste(){
-  const x=pasteQueue.shift();if(!x){go({name:'home'});return;}
-  const left=pasteQueue.length?'（后面还有 '+pasteQueue.length+' 张）':'';
-  const date=/^\d{4}-\d{2}-\d{2}$/.test(x.date||'')?x.date:(homeDate||ymd());
-  if(x.kind==='inv'){
-    const supplier=String(x.supplier||'').trim(),invoiceNo=String(x.invoiceNo||'').trim();
-    const items=(x.items||[]).map(it=>{const q=String(it.question||'');return {name:String(it.name||''),qty:num(it.qty),unit:String(it.unit||''),price:num(it.price),subtotal:num(it.subtotal)||r2(num(it.qty)*num(it.price)),unsure:!!(it.unsure||q),question:q};});
-    items.forEach(it=>{const u=S.units[supplier+'|'+it.name];if(u&&!it.unit)it.unit=u;});
-    const dup=invoiceNo&&S.invoices.find(v=>v.supplier===supplier&&v.invoiceNo===invoiceNo);
-    draft={id:newId('inv'),date,supplier,invoiceNo,items:items.length?items:[blankItem()],readTotal:x.total!=null&&x.total!==''?num(x.total):null,photoBlob:null,photoUrl:'',loading:false,isNew:true,note:String(x.note||''),
-      error:(dup?'这张单好像已经记过了（'+niceDate(dup.date)+'，同一家、同一个单号）。如果是重复的，按「取消」。':'')};
-    go({name:'invoice',from:'home'});
-    if(left)toast('Claude 读好的进货单'+left);
-  }else{
-    await startNight(date,'home');
-    const d=draft;
-    applyLeftover(d,x.items);
-    if(x.others===0||x.restZero===true)d.rows.forEach(r=>{if(r.left==='')r.left=0;});
-    if(x.revenue!=null&&x.revenue!=='')d.revenue=String(num(x.revenue));
-    render();
-    if(left)toast('Claude 读好的剩货单'+left);
-  }
 }
 
 // ---------- screens: records ----------
@@ -670,15 +601,100 @@ async function exportCsv(){
   await giveFile('水果账本-'+ymd()+'.csv',new Blob(['﻿'+lines.join('\r\n')],{type:'text/csv'}));
 }
 
+// ---------- paste text from Claude ----------
+let pasteState={text:'',err:'',parsed:null};
+function normItem(it){
+  if(Array.isArray(it))it={name:it[0],qty:it[1],unit:it[2],price:it[3],subtotal:it[4]};
+  const qty=num(it.qty),price=num(it.price);
+  return {name:String(it.name||'').trim(),qty,unit:String(it.unit||'').trim(),price,subtotal:it.subtotal!=null&&it.subtotal!==''?r2(num(it.subtotal)):r2(qty*price)};
+}
+function parseLedgerText(t){
+  const a=t.indexOf('{'),b=t.lastIndexOf('}');
+  if(a<0||b<a)throw new Error('找不到账本文字。请把 Claude 回给你的那一整段复制过来。');
+  let d;try{d=JSON.parse(t.slice(a,b+1).replace(/[“”]/g,'"'));}catch(e){throw new Error('文字不完整，可能少复制了一段。请回到 Claude，按那段文字的「复制」再贴一次。');}
+  const invs=(Array.isArray(d.invoices)?d.invoices:[]).map(iv=>{
+    const items=(iv.items||[]).map(normItem).filter(x=>x.name||x.subtotal);
+    const date=String(iv.date||'');
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(date))throw new Error('有一张单没有日期，请叫 Claude 补上。');
+    const supplier=String(iv.supplier||'').trim(),invoiceNo=String(iv.invoiceNo||'').trim();
+    const total=r2(items.reduce((s,x)=>s+x.subtotal,0));
+    const id=String(iv.id||'').replace(/[^A-Za-z0-9_\-]/g,'')||('inv_'+hashId(supplier+'|'+invoiceNo+'|'+date+'|'+total).slice(1));
+    const dup=S.invoices.find(x=>x.id===id||(x.date===date&&x.supplier===supplier&&(invoiceNo?x.invoiceNo===invoiceNo:Math.abs(num(x.total)-total)<0.01)));
+    return {id,date,supplier,invoiceNo,items,total,dup:!!dup};
+  });
+  let night=null;
+  if(d.night&&/^\d{4}-\d{2}-\d{2}$/.test(d.night.date||'')){
+    night={date:d.night.date,revenue:d.night.revenue==null||d.night.revenue===''?null:num(d.night.revenue),left:d.night.left||{},restZero:d.night.restZero!==false};
+  }
+  if(!invs.length&&!night)throw new Error('这段文字里没有单，也没有剩货。');
+  return {invoices:invs,night};
+}
+function readPaste(){
+  const t=document.getElementById('ptxt').value;pasteState.text=t;
+  try{pasteState.parsed=parseLedgerText(t);pasteState.err='';}catch(e){pasteState.parsed=null;pasteState.err=e.message;}
+  render();
+}
+function applyPre(rows,pre){
+  const left=Object.entries(pre.left||{}).map(([k,v])=>[String(k).trim(),num(v)]);
+  const used=new Set();
+  rows.forEach(r=>{
+    let hit=left.find(([k])=>k===r.name)||left.find(([k])=>!used.has(k)&&(r.name.startsWith(k)||k.startsWith(r.name)));
+    if(hit){r.left=hit[1];used.add(hit[0]);}
+    else if(pre.restZero)r.left=0;
+  });
+  left.forEach(([k,v])=>{if(!used.has(k))rows.push({name:k,unit:'',opening:null,left:v,unsure:true,question:'今天没有这样水果的进货记录，请确认'});});
+}
+function vPaste(){
+  const p=pasteState.parsed;
+  let body='';
+  if(p){
+    const news=p.invoices.filter(x=>!x.dup);
+    body=`${p.invoices.map(iv=>`<div class="card" style="gap:6px${iv.dup?';opacity:.6':''}"><div class="row"><strong>${esc(iv.supplier||'（没写供应商）')}</strong><span class="num" style="font-weight:500">${money(iv.total)}</span></div>
+      <div class="sub">${niceDate(iv.date)}${iv.invoiceNo?' · 单号 '+esc(iv.invoiceNo):''} · ${iv.items.length} 项</div>
+      <div class="sub" style="line-height:1.6">${iv.items.map(x=>esc(x.name)+' '+fmtQ(x.qty)+esc(x.unit)).join('、')}</div>
+      ${iv.dup?'<div class="sub" style="color:var(--warn-ink)">账本里已经有这张，不会重复记。</div>':''}</div>`).join('')}
+    ${p.invoices.length>1?`<div class="row"><span class="dim">新单合计</span><span class="big num">${money(r2(news.reduce((s,x)=>s+x.total,0)))}</span></div>`:''}
+    ${p.night?`<div class="ok">还有 ${niceDate(p.night.date)} 的${p.night.revenue!=null?'收入 '+money(p.night.revenue)+(Object.keys(p.night.left).length||p.night.restZero?' 和':''):''}${Object.keys(p.night.left).length||p.night.restZero?'剩货':''}，保存后会打开结算画面给你看一眼。</div>`:''}
+    <button type="button" class="btn primary" data-act="pasteSave">${news.length?'确认，保存 '+news.length+' 张单':(p.night?'下一步：看结算':'没有新单，返回')}</button>`;
+  }
+  $app.innerHTML=`<div class="wrap"><div class="back"><button type="button" data-act="pasteBack" aria-label="返回"><svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg></button><h1>贴上 Claude 读好的单</h1></div>
+  ${p?'':`<p class="sub" style="margin:0;line-height:1.7">在 Claude 那边按「复制」，回来按下面的「贴上」。</p>
+  <button type="button" class="btn primary" data-act="pasteClip">贴上</button>
+  <textarea id="ptxt" class="in" style="height:140px;padding:10px 12px;font-size:14px;resize:vertical" placeholder="或者长按这里，选「粘贴」">${esc(pasteState.text)}</textarea>
+  <button type="button" class="btn" data-act="pasteRead">读取</button>`}
+  ${pasteState.err?`<div class="warn">${esc(pasteState.err)}</div>`:''}
+  ${body}
+  </div>`;
+}
+async function savePaste(btn){
+  const p=pasteState.parsed;if(!p)return;
+  btn.disabled=true;btn.textContent='保存中…';
+  try{
+    const now=new Date().toISOString();let n=0;
+    for(const iv of p.invoices){
+      if(iv.dup)continue;
+      await putDoc('invoices',iv.id,{date:iv.date,supplier:iv.supplier,invoiceNo:iv.invoiceNo,items:iv.items,total:iv.total,photoId:'',createdAt:now,updatedAt:now});n++;
+      if(iv.supplier)for(const it of iv.items){if(it.name&&it.unit){const k=iv.supplier+'|'+it.name;if(S.units[k]!==it.unit){await put('units',hashId(k),{supplier:iv.supplier,name:it.name,unit:it.unit});S.units[k]=it.unit;}}}
+    }
+    pasteState={text:'',err:'',parsed:null};
+    if(p.night){if(n)toast('已保存 '+n+' 张单');await startNight(p.night.date,'home',p.night);return;}
+    toast(n?'已保存 '+n+' 张单':'没有新单');
+    const d=p.invoices[0]&&p.invoices[0].date;homeDate=d&&d!==ymd()?d:null;go({name:'home'});
+  }catch(e){console.warn(e);btn.disabled=false;btn.textContent='再按一次保存';toast('保存失败，请再按一次');}
+}
+
 // ---------- actions ----------
 document.addEventListener('click',async e=>{
   const b=e.target.closest('[data-act]');if(!b)return;
   const a=b.dataset.act;
-  if(a==='back'&&pasteQueue.length){const n=pasteQueue.length;pasteQueue=[];toast('已取消，后面 '+n+' 张没有记');}
-  if(a==='back'&&view.name==='paste'){go({name:'home'});return;}
   if(a==='back'){const from=view.from;draft=null;if(view.name==='invoice'||view.name==='night')go(from==='day'?{name:'day',date:view.dayDate}:{name:from||'home'});else go({name:'records'});}
   else if(a==='newInvoice')startInvoice(false);
   else if(a==='manualInvoice')startInvoice(true);
+  else if(a==='openPaste'){pasteState={text:'',err:'',parsed:null};go({name:'paste'});}
+  else if(a==='pasteClip'){try{const t=await navigator.clipboard.readText();document.getElementById('ptxt').value=t;readPaste();}catch(err){toast('请长按方框，选「粘贴」');document.getElementById('ptxt').focus();}}
+  else if(a==='pasteRead')readPaste();
+  else if(a==='pasteSave')savePaste(b);
+  else if(a==='pasteBack'){go({name:'home'});}
   else if(a==='manual'){draft.loading=false;draft.items=[blankItem()];render();}
   else if(a==='addRow'){draft.items.push(blankItem());render();}
   else if(a==='delRow'){draft.items.splice(+b.dataset.i,1);if(!draft.items.length)draft.items.push(blankItem());render();}
@@ -687,12 +703,6 @@ document.addEventListener('click',async e=>{
   else if(a==='openInv'){const iv=S.invoices.find(x=>x.id===b.dataset.id);if(iv){const from=view.name==='day'?'day':'home',dd=view.date;await editInvoice(iv,from);view.dayDate=dd;}}
   else if(a==='night'){const from=view.name==='day'?'day':'home',dd=view.date;await startNight(b.dataset.date,from);view.dayDate=dd;}
   else if(a==='readLeft')readLeftover();
-  else if(a==='paste'){pasteErr='';go({name:'paste'});}
-  else if(a==='pasteGo')usePaste(pasteText);
-  else if(a==='pasteClip'){
-    let t='';try{t=await navigator.clipboard.readText();}catch(e){}
-    if(t)usePaste(t);else{pasteErr='手机没让 App 读剪贴板。请在下面的框里长按 → 贴上，再按「读取框里的资料」。';render();const bx=document.getElementById('pasteBox');if(bx)bx.focus();}
-  }
   else if(a==='saveNight')saveNight(b);
   else if(a==='openDay')go({name:'day',date:b.dataset.date});
   else if(a==='exportCsv')exportCsv();
@@ -724,7 +734,7 @@ document.addEventListener('click',async e=>{
     $app.innerHTML='<div class="wrap"><div class="empty">这个浏览器存不了资料。请用 iPhone 的 Safari 打开，并且不要用「无痕浏览」。</div></div>';return;
   }
   try{if(navigator.storage&&navigator.storage.persist)navigator.storage.persist();}catch(e){}
-  if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js',{updateViaCache:'none'}).then(r=>{try{r.update();}catch(e){}}).catch(()=>{});}
+  if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js').catch(()=>{});}
   decideStart();
 })();
 })();
